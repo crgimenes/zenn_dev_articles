@@ -1,0 +1,127 @@
+---
+title: "Goでターミナルに花火アニメーションを打ち上げる"
+emoji: "🎆"
+type: "tech"
+topics: ["go", "terminal", "cli", "animation"]
+published: true
+---
+
+
+A small program celebrates the arrival of 2025 with fireworks in the terminal. It includes several interesting tricks to start your year with plenty of code.
+
+![fireworks in Go](https://crg.eti.br/en/post/feliz-2025-com-fogos-de-artificio-no-terminal-com-golang/fireworks-em-golang.webp)
+
+We use `os.Stdout.WriteString` to write directly to the stdout descriptor, that is, the terminal's standard output. This is the fastest way to write to the terminal, but it is not synchronized. That means there is no guarantee the output will be written in the expected order. In our case, though, this is desirable because it lets the fireworks overlap, giving the impression that they are exploding simultaneously.
+
+```go
+func drawExplosion(x, y int, maxRadius int) {
+    color := randomColor()
+    for radius := 1; radius <= maxRadius; radius++ {
+        for angle := 0; angle < 360; angle += 10 {
+            theta := float64(angle) * (math.Pi / 180)
+            px := x + int(float64(radius)*2.0*math.Cos(theta))
+            py := y + int(float64(radius)*math.Sin(theta))
+            sy := strconv.Itoa(py)
+            sx := strconv.Itoa(px)
+            os.Stdout.WriteString(
+                "[" + sy + ";" + sx + "H" + color + "*",
+            )
+        }
+        time.Sleep(100 * time.Millisecond)
+    }
+    for radius := 1; radius <= maxRadius; radius++ {
+        for angle := 0; angle < 360; angle += 10 {
+            theta := float64(angle) * (math.Pi / 180)
+            px := x + int(float64(radius)*2.0*math.Cos(theta))
+            py := y + int(float64(radius)*math.Sin(theta))
+            sy := strconv.Itoa(py)
+            sx := strconv.Itoa(px)
+            os.Stdout.WriteString(
+                "[" + sy + ";" + sx + "H" + ANSI_RESET + " ",
+            )
+        }
+        time.Sleep(50 * time.Millisecond)
+    }
+}
+```
+
+The most important trick when writing directly to the terminal without controlling synchronization is to send all the information to the descriptor at once, that is, write as much as possible in a single call. This prevents the output from being interleaved with that of other processes, *most of the time*. That's why the text is fully concatenated before we call `os.Stdout.WriteString`. Small artifacts may still appear during drawing, but it's a small price to pay for a smoother animation.
+
+The explosions are simulated with circles of different sizes and random colors. The drawing routine uses an old technique for creating circles, slightly modified because terminal characters are taller than they are wide. That's why we need a 2.0 scale factor on the x axis. This produces an ellipse that looks like a circle in the terminal.
+
+```go
+func drawBanner() {
+    np := 0
+    for {
+        np++
+
+        x := 1
+        mx.Lock()
+        y := rows / 2
+        mx.Unlock()
+
+        sy := strconv.Itoa(y)
+        sx := strconv.Itoa(x)
+
+        os.Stdout.WriteString(ANSI_SAVE_CURSOR +
+            "[" + sy + ";" + sx + "H" +
+            ANSI_WHITE + string(bannerBuff) +
+            ANSI_RESTORE_CURSOR)
+
+        if np%4 == 0 {
+            copy(bannerBuff, bannerBuff[1:])
+            bannerBuff[len(bannerBuff)-1] = bannerBuff[0]
+        }
+
+        time.Sleep(40 * time.Millisecond)
+    }
+}
+```
+
+We also draw a banner with our happy new year message. The banner is a string that is rotated every 4 frames to give the impression of movement, but it is written to the screen every frame. This keeps it always on top of the fireworks. Depending on the size of your terminal, you may need to adjust the timing for a smoother effect.
+
+We use a very simple condition to ensure one rotation every few frames: `np%4 == 0`. In other words, we take the remainder of dividing `np` by 4 and, if it is zero, we rotate the banner.
+
+We also use the same remainder idea to fill the banner buffer with the same message repeated over and over, covering the whole screen.
+
+```go
+bannerBuff = make([]rune, 0, cols)
+runes := []rune(BANNER)
+
+for i := 0; i < cols; i++ {
+    bannerBuff = append(bannerBuff, runes[i%len(runes)])
+}
+```
+
+At program startup, we begin monitoring a few system signals: `SIGWINCH`, `SIGTERM`, and `SIGINT`. This lets us resize the screen if the terminal is resized and exit the program cleanly if the user presses `Ctrl+C`.
+
+```go
+ch := make(chan os.Signal, 1)
+signal.Notify(ch, syscall.SIGWINCH, os.Interrupt, syscall.SIGTERM)
+go func() {
+    for caux := range ch {
+        switch caux {
+        case syscall.SIGWINCH:
+            updateTerminalSize()
+        case os.Interrupt, syscall.SIGTERM:
+            os.Stdout.WriteString(
+                ANSI_SHOW_CURSOR +
+                ANSI_RESET +
+                ANSI_CLEAR +
+                "[1;1H\r\n",
+            )
+
+            os.Exit(0)
+        }
+    }
+}()
+ch <- syscall.SIGWINCH
+```
+
+The complete source code is available in the [Go Study Group](https://github.com/crgimenes/grupo-estudos-golang/tree/master/fireworks) repository.
+
+Also check out the video of the program running:
+
+https://www.youtube.com/watch?v=hBzerbzNboY
+
+Happy 2025!
